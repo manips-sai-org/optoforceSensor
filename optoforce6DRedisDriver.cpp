@@ -1,7 +1,7 @@
 /*
  * Driver to use the force sensor optoforce (tested on 6D force sensor only for now)
  * it will create a connection, read the data, transfer the data from count value to real units
- * and publish it in a force sensor shared memory named "optoforce:force_sensor:6Dsensor"
+ * and publish it in redis with a key named "sai2::optoforceSensor::6Dsensor::force"
  */
 
 
@@ -28,6 +28,9 @@ const double cutoff_freq = 0.05;  //the cutoff frequency of the filter, in the r
 bool use_filter = true;
 
 unsigned long long counter = 0;
+
+std::string serialNumber;  // To know which sensitivity report to use
+std::string deviceName;  // To know which sensitivity report to use
 
 //std::ofstream force_file;
 
@@ -98,9 +101,9 @@ bool SetConfig(OptoDAQ & p_optoDAQ, int p_iSpeed, int p_iFilter)
 
 void ShowInformation(OptoDAQ & p_optoDAQ, OPort & p_Port)
 {
-	std::string deviceName = std::string(p_Port.deviceName);
+	deviceName = std::string(p_Port.deviceName);
 	std::string name = std::string(p_Port.name);
-	std::string serialNumber = std::string (p_Port.serialNumber);
+	serialNumber = std::string (p_Port.serialNumber);
 	int version = p_optoDAQ.getVersion();
 	std::cout<<"Device Name: "<<deviceName<<std::endl;
 	std::cout<<"Name: "<<name<<std::endl;
@@ -201,48 +204,77 @@ bool Is3DSensor(OptoDAQ & p_optoDAQ)
 void processRaw6DSensorData(const OptoPackage6D& optoPackage, Eigen::VectorXd& data)
 {
 
+    double Fz_compression_coeff;
+    double Fz_tension_coeff;
+    // double Fz_coeff;
+
+    double Fx_coeff;
+    double Fy_coeff;
+
+    double Tx_coeff;
+    double Ty_coeff;
+    double Tz_coeff;
+
     // square sensor from sensitivity report
+    if(deviceName == "95 v1.0")
+    {
+    	// std::cout << "square sensor detected" << std::endl;
+	    double Fz_compression_coeff = 1200./16078.;
+	    double Fz_tension_coeff = 150./1925.;
+	    // double Fz_coeff = (Fzp_coeff + Fzm_coeff)/2;
 
-    double Fzp_coeff = 1200./16078.;
-    double Fzm_coeff = 150./1925.;
-    double Fz_coeff = (Fzp_coeff + Fzm_coeff)/2;
+	    double Fx_coeff = 150./7098.;
+	    double Fy_coeff = 150./8006.;
 
-    double Fx_coeff = 150./7098.;
-    double Fy_coeff = 150./8006.;
+	    double Tx_coeff = 5./10284.;
+	    double Ty_coeff = 5./10134.;
+	    double Tz_coeff = 5./14977.;
 
-    double Tx_coeff = 5./10284.;
-    double Ty_coeff = 5./10134.;
-    double Tz_coeff = 5./14977.;
-
+	    data(0) = optoPackage.Fx * Fx_coeff;
+	    data(1) = optoPackage.Fy * Fy_coeff;
+		if(optoPackage.Fz < 0) // compression
+		{
+			data(2) = optoPackage.Fz * Fz_compression_coeff;
+		}
+		else
+		{
+			data(2) = optoPackage.Fz * Fz_tension_coeff;
+		}
+	    data(3) = -optoPackage.Tx * Tx_coeff;
+	    data(4) = optoPackage.Ty * Ty_coeff;
+	    data(5) = -optoPackage.Tz * Tz_coeff;
+    }
     // Round sensor from sensitivity report
+    else if(deviceName == "64 v0.9" && serialNumber == "UCE0A076")
+    {
+    	// std::cout << "round sensor detected" << std::endl;
 
-//    double Fz_coeff = 1.0/8.06;
+		double Fz_compression_coeff = 1.0/8.06;
+		double Fz_tension_coeff = 1.0/8.06;
+		double Fx_coeff = 1.0/44.19;
+		double Fy_coeff = 1.0/44.24;
 
-//    double Fz_coeff = 1.0/8.06/4.62*5; // form fast calibration with water bottle
+		double Tx_coeff = 1.0/1114.38;
+		double Ty_coeff = 1.0/1043.05;
+		double Tz_coeff = 1.0/1536.09;
 
-//    double Fx_coeff = 1.0/44.19;
-//    double Fy_coeff = 1.0/44.24;
+		data(0) = -optoPackage.Fx * Fx_coeff;
+		data(1) = -optoPackage.Fy * Fy_coeff;
+		if(optoPackage.Fz < 0) // compression
+		{
+			data(2) = -optoPackage.Fz * Fz_compression_coeff;
+		}
+		else
+		{
+			data(2) = -optoPackage.Fz * Fz_tension_coeff;
+		}
+		data(3) = -optoPackage.Tx * Tx_coeff;
+		data(4) = -optoPackage.Ty * Ty_coeff;
+		data(5) = -optoPackage.Tz * Tz_coeff;
 
-//    double Tx_coeff = 1.0/1114.38;
-//    double Ty_coeff = 1.0/1043.05;
-//    double Tz_coeff = 1.0/1536.09;
+    }
 
 
-    // Square sensor
-    data(0) = optoPackage.Fx * Fx_coeff;
-    data(1) = -optoPackage.Fy * Fy_coeff;
-    data(2) = optoPackage.Fz * Fz_coeff;
-    data(3) = -optoPackage.Tx * Tx_coeff;
-    data(4) = -optoPackage.Ty * Ty_coeff;
-    data(5) = -optoPackage.Tz * Tz_coeff;
-
-    // Round sensor
-//    data(0) = optoPackage.Fx * Fx_coeff;
-//    data(1) = optoPackage.Fy * Fy_coeff;
-//    data(2) = optoPackage.Fz * Fz_coeff;
-//    data(3) = optoPackage.Tx * Tx_coeff;
-//    data(4) = optoPackage.Ty * Ty_coeff;
-//    data(5) = optoPackage.Tz * Tz_coeff;
 
 }
 
@@ -369,12 +401,12 @@ void Run6DSensorExample(OptoDAQ & p_optoDAQ)
 		    force_filtered = force_raw;
 		}
 
-		// if(counter%1500 == 0)
+		// if(counter%500 == 0)
 		// {
 		// 	std::cout << force_filtered(2) << std::endl;
 		// }
 
-		// publish data to shared memory remaping it to a right hand base
+		// publish data to redis key remaping it to a right hand base
 
 		redis_client.setEigenMatrixDerived(EE_FORCE_SENSOR_FORCE_KEY, force_filtered);
 
