@@ -406,8 +406,8 @@ void Run6DSensorExample(OptoDAQ & p_optoDAQ)
 		// 	std::cout << force_filtered(2) << std::endl;
 		// }
 
-		// publish data to redis key remaping it to a right hand base
 
+		// publish to redis
 		redis_client.setEigenMatrixDerived(EE_FORCE_SENSOR_FORCE_KEY, force_filtered);
 
 		counter++;
