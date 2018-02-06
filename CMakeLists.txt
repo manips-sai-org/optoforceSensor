@@ -27,12 +27,24 @@ find_library(HIREDIS_LIBRARY hiredis)
 # - eigen3
 find_package(Eigen3 REQUIRED)
 
+# jsoncpp
+if (CMAKE_SYSTEM_NAME MATCHES Darwin) 
+	find_library(JSONCPP_LIBRARY jsoncpp)
+elseif (CMAKE_SYSTEM_NAME MATCHES Linux)
+	find_package(PkgConfig REQUIRED)
+	pkg_check_modules(JSONCPP jsoncpp)
+	link_directories(${JSONCPP_LIBRARY_DIRS})
+	set(JSONCPP_LIBRARY ${JSONCPP_LIBRARIES})
+endif ()
+
+
 # create headers list
 set(optoforce_driver_INCLUDE_DIRS   
 					${PROJECT_SOURCE_DIR}/redis
 					${PROJECT_SOURCE_DIR}/filters
 				    ${OPTOFORCE_INCLUDE_DIRS}
 				    ${EIGEN3_INCLUDE_DIR}
+					${JSONCPP_INCLUDE_DIRS}
 )
 
 # create libraries list

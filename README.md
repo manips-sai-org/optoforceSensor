@@ -6,6 +6,13 @@ it has been tested on the 6DOF force sensor only.
 The data is processed to send to redis data in a direct right hand basis and with units (N for the forces, Nm for the moments)
 The force given is the force that the sensor applies to the environment, in the sensor's frame.
 
+Dependencies
+------------
+The driver depends on Json and Ncurses libraries. install them with
+```sh
+sudo apt-get install libjsoncpp-dev libncurses5-dev
+```
+
 Installation
 ------------
 Extract the files in LINUX_API_v1.5.1.tar.gz
