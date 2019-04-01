@@ -11,9 +11,10 @@
 #include <time.h>
 #include <stdio.h>
 #include <unistd.h>
-#include "omd/opto.h"
-#include "omd/sensorconfig.h"
-#include "omd/optopackage.h"
+#include "OptoDAQ.h"
+#include "OptoDAQWatcher.h"
+#include "OptoDAQDescriptor.h"
+#include "OptoPacket6D.h"
 #include "filters/ButterworthFilter.h"
 
 // For redis publication
@@ -25,7 +26,7 @@ typedef unsigned long long mytime_t;
 
 sai::ButterworthFilter filter;
 const double cutoff_freq = 0.05;  //the cutoff frequency of the filter, in the range of (0 0.5) of sampling freq
-bool use_filter = true;
+bool use_filter = false;
 
 unsigned long long counter = 0;
 
@@ -78,15 +79,14 @@ void MySleep(unsigned long p_uMillisecs)
  */
 bool SetConfig(OptoDAQ & p_optoDAQ, int p_iSpeed, int p_iFilter)
 {
-	SensorConfig sensorConfig;
-	sensorConfig.setSpeed(p_iSpeed);
-	sensorConfig.setFilter(p_iFilter);
+	OptoConfig sensorConfig(p_iSpeed, p_iFilter, 0 /*Hardware zeroing turned off*/);
 	mytime_t tNow = Now();
 
 	bool bSuccess = false;
 	do {
-		bSuccess = p_optoDAQ.sendConfig(sensorConfig);
+		bSuccess = p_optoDAQ.SendConfig(sensorConfig);
 		if (bSuccess) {
+			p_optoDAQ.RequestSensitivityReport(); // This call is a must
 			return true;
 		}
 		if (ElapsedTime(tNow) > 1000) {
@@ -99,16 +99,14 @@ bool SetConfig(OptoDAQ & p_optoDAQ, int p_iSpeed, int p_iFilter)
 }
 
 
-void ShowInformation(OptoDAQ & p_optoDAQ, OPort & p_Port)
+void ShowInformation(const OptoDAQDescriptor& descriptor)
 {
-	deviceName = std::string(p_Port.deviceName);
-	std::string name = std::string(p_Port.name);
-	serialNumber = std::string (p_Port.serialNumber);
-	int version = p_optoDAQ.getVersion();
+	deviceName = std::string(descriptor.GetTypeName());
+	serialNumber = std::string (descriptor.GetSerialNumber());
 	std::cout<<"Device Name: "<<deviceName<<std::endl;
-	std::cout<<"Name: "<<name<<std::endl;
+	std::cout<<"Port: "<<descriptor.GetAddress()<<std::endl;
+	std::cout<<"Protocol version: "<<descriptor.GetProtocolVersion()<<std::endl;
 	std::cout<<"Serial Number: "<<serialNumber<<std::endl;
-	std::cout<<"Version: "<<version<<std::endl;
 }
 
 
@@ -117,60 +115,63 @@ void ShowInformation(OptoDAQ & p_optoDAQ, OPort & p_Port)
  * Opens the desired port
  * it returns true if port could be opened otherwise returns false
  */
-bool OpenPort(OptoDAQ & p_optoDAQ, OptoPorts & p_Ports, int p_iIndex)
+bool OpenPort(OptoDAQDescriptor& descriptor, OptoDAQ & p_optoDAQ, int p_iIndex)
 {
+	OptoDAQWatcher watcher;
+	watcher.Start();
+
 	MySleep(500); // We wait some ms to be sure about OptoPorts enumerated PortList
-	OPort * portList = p_Ports.listPorts(true);
-	int iLastSize = p_Ports.getLastSize();
-	if (p_iIndex >= iLastSize) {
+	OptoDAQDescriptor descriptors[16]; //shouldn't need to use more than 16 sensors at once
+	size_t count = watcher.GetConnectedDAQs(descriptors, 16, true);
+
+	if (p_iIndex >= count) {
 		// index overflow
 		return false;
 	}
-	bool bSuccess = p_optoDAQ.open(portList[p_iIndex]);
-	if (bSuccess) {
-		ShowInformation(p_optoDAQ, portList[p_iIndex]);
-	}
+	descriptor = descriptors[p_iIndex];
+	ShowInformation(descriptor);
+	p_optoDAQ.SetOptoDAQDescriptor(descriptor);
+	bool bSuccess = p_optoDAQ.Open();
 	return bSuccess;
 }
 
 
-/*
- * Blocking call to read one 3D package (with one second timeout)
- * it return a non-negative number if it succeeded (p_Package will be the read package)
- * otherwise returns -1
- */
-int ReadPackage3D(OptoDAQ & p_optoDAQ, OptoPackage & p_Package)
-{
-	int iSize = -1;
-	mytime_t tNow = Now();
-	for (;;) {
-		iSize = p_optoDAQ.read(p_Package, 0, false);
-		if (iSize < 0 || iSize > 0) {
-			break;
-		}
-		// No packages in the queue so we check the timeout
-		if (ElapsedTime(tNow) >= 1000) {
-			break;
-		}
-		usleep(100);
-//		MySleep(1);
-	}
-	return iSize;
-}
+// /*
+//  * Blocking call to read one 3D package (with one second timeout)
+//  * it return a non-negative number if it succeeded (p_Package will be the read package)
+//  * otherwise returns -1
+//  */
+// int ReadPackage3D(OptoDAQ & p_optoDAQ, OptoPackage & p_Package)
+// {
+// 	int iSize = -1;
+// 	mytime_t tNow = Now();
+// 	for (;;) {
+// 		iSize = p_optoDAQ.read(p_Package, 0, false);
+// 		if (iSize < 0 || iSize > 0) {
+// 			break;
+// 		}
+// 		// No packages in the queue so we check the timeout
+// 		if (ElapsedTime(tNow) >= 1000) {
+// 			break;
+// 		}
+// 		usleep(100);
+// //		MySleep(1);
+// 	}
+// 	return iSize;
+// }
 
 
 /*
  * Blocking call to read one 6D package (with one second timeout)
- * it return a non-negative number if it succeeded (p_Package will be the read package)
- * otherwise returns -1
+ * return true if success, else false
  */
-int ReadPackage6D(OptoDAQ & p_optoDAQ, OptoPackage6D & p_Package)
+bool ReadPackage6D(OptoDAQ & p_optoDAQ, OptoPacket6D & p_Package)
 {
-	int iSize = -1;
+	bool success = false;
 	mytime_t tNow = Now();
 	for (;;) {
-		iSize = p_optoDAQ.read6D(p_Package, false);
-		if (iSize < 0 || iSize > 0) {
+		success = p_optoDAQ.GetLastPacket6D(&p_Package, false /*non-blocking*/);
+		if (success) {
 			break;
 		}
 		// No packages in the queue so we check the timeout
@@ -180,170 +181,114 @@ int ReadPackage6D(OptoDAQ & p_optoDAQ, OptoPackage6D & p_Package)
 		usleep(100);
 //		MySleep(1);
 	}
-	return iSize;
+	return success;
 }
 
 
-/*
- * The function determines if the sensor is a 3D sensor
- */
-bool Is3DSensor(OptoDAQ & p_optoDAQ)
-{
-	opto_version optoVersion = p_optoDAQ.getVersion();
-	if (optoVersion != _95 && optoVersion != _64) {
-		return true;
-	}
-	return false;
-}
+// /*
+//  * The function determines if the sensor is a 3D sensor
+//  */
+// bool Is3DSensor(OptoDAQ & p_optoDAQ)
+// {
+// 	opto_version optoVersion = p_optoDAQ.getVersion();
+// 	if (optoVersion != _95 && optoVersion != _64) {
+// 		return true;
+// 	}
+// 	return false;
+// }
 
 
 /*
  * Remaps the measurements to a right hand basis and uses the sensivity report (in docs)
  * to transform the measurements in N and Nm
  */
-void processRaw6DSensorData(const OptoPackage6D& optoPackage, Eigen::VectorXd& data)
+bool processRaw6DSensorData(const OptoPacket6D& optoPackage, Eigen::VectorXd& data)
 {
-
-    double Fz_compression_coeff;
-    double Fz_tension_coeff;
-    // double Fz_coeff;
-
-    double Fx_coeff;
-    double Fy_coeff;
-
-    double Tx_coeff;
-    double Ty_coeff;
-    double Tz_coeff;
-
-    // square sensor from sensitivity report
-    if(deviceName == "95 v1.0")
-    {
-    	// std::cout << "square sensor detected" << std::endl;
-	    double Fz_compression_coeff = 1200./16078.;
-	    double Fz_tension_coeff = 150./1925.;
-	    // double Fz_coeff = (Fzp_coeff + Fzm_coeff)/2;
-
-	    double Fx_coeff = 150./7098.;
-	    double Fy_coeff = 150./8006.;
-
-	    double Tx_coeff = 5./10284.;
-	    double Ty_coeff = 5./10134.;
-	    double Tz_coeff = 5./14977.;
-
-	    data(0) = optoPackage.Fx * Fx_coeff;
-	    data(1) = optoPackage.Fy * Fy_coeff;
-		if(optoPackage.Fz < 0) // compression
-		{
-			data(2) = optoPackage.Fz * Fz_compression_coeff;
-		}
-		else
-		{
-			data(2) = optoPackage.Fz * Fz_tension_coeff;
-		}
-	    data(3) = -optoPackage.Tx * Tx_coeff;
-	    data(4) = optoPackage.Ty * Ty_coeff;
-	    data(5) = -optoPackage.Tz * Tz_coeff;
-    }
-    // Round sensor from sensitivity report
-    else if(deviceName == "64 v0.9" && serialNumber == "UCE0A076")
+	if(deviceName == "64" && serialNumber == "HEXHB148")
     {
     	// std::cout << "round sensor detected" << std::endl;
-
-		double Fz_compression_coeff = 1.0/8.06;
-		double Fz_tension_coeff = 1.0/8.06;
-		double Fx_coeff = 1.0/44.19;
-		double Fy_coeff = 1.0/44.24;
-
-		double Tx_coeff = 1.0/1114.38;
-		double Ty_coeff = 1.0/1043.05;
-		double Tz_coeff = 1.0/1536.09;
-
-		data(0) = -optoPackage.Fx * Fx_coeff;
-		data(1) = -optoPackage.Fy * Fy_coeff;
-		if(optoPackage.Fz < 0) // compression
-		{
-			data(2) = -optoPackage.Fz * Fz_compression_coeff;
-		}
-		else
-		{
-			data(2) = -optoPackage.Fz * Fz_tension_coeff;
-		}
-		data(3) = -optoPackage.Tx * Tx_coeff;
-		data(4) = -optoPackage.Ty * Ty_coeff;
-		data(5) = -optoPackage.Tz * Tz_coeff;
-
+    	if (!optoPackage.IsValid()) {
+    		return false;
+    	}
+    	auto simplePacket = optoPackage.ToSimplePacket();
+		data.setZero(6);
+		data << simplePacket.Fx, 
+			simplePacket.Fy,
+			simplePacket.Fz,
+			simplePacket.Tx,
+			simplePacket.Ty,
+			simplePacket.Tz;
+		return true;
     }
-
-
-
+    return false;
 }
 
-void processRaw3DSensorData(const OptoPackage& optoPackage, Eigen::VectorXd& data)
-{
+// void processRaw3DSensorData(const OptoPackage& optoPackage, Eigen::VectorXd& data)
+// {
 
-    std::cout << "WARNING : processRaw3DSensorData not implemented." << std::endl;
+//     std::cout << "WARNING : processRaw3DSensorData not implemented." << std::endl;
 
-}
+// }
 
-void Run3DSensorExample(OptoDAQ & p_optoDAQ)
-{
-	// start redis client
-	HiredisServerInfo info;
-	info.hostname_ = "127.0.0.1";
-	info.port_ = 6379;
-	info.timeout_ = { 1, 500000 }; // 1.5 seconds
-	auto redis_client = CDatabaseRedisClient();
-	redis_client.serverIs(info);
+// void Run3DSensorExample(OptoDAQ & p_optoDAQ)
+// {
+// 	// start redis client
+// 	HiredisServerInfo info;
+// 	info.hostname_ = "127.0.0.1";
+// 	info.port_ = 6379;
+// 	info.timeout_ = { 1, 500000 }; // 1.5 seconds
+// 	auto redis_client = CDatabaseRedisClient();
+// 	redis_client.serverIs(info);
 
-    if(use_filter)
-    {
-        filter.setDimension(3);
-        filter.setCutoffFrequency(cutoff_freq);
-    }
+//     if(use_filter)
+//     {
+//         filter.setDimension(3);
+//         filter.setCutoffFrequency(cutoff_freq);
+//     }
 
-    Eigen::VectorXd force_raw = Eigen::VectorXd::Zero(3);
-    Eigen::VectorXd force_filtered = Eigen::VectorXd::Zero(3);
+//     Eigen::VectorXd force_raw = Eigen::VectorXd::Zero(3);
+//     Eigen::VectorXd force_filtered = Eigen::VectorXd::Zero(3);
 
-	mytime_t tNow = Now();
-	unsigned int uTotalReadPackages = 0;
-	while(true)
-	{
-		mytime_t tLoopNow = NowMicro();
-		OptoPackage optoPackage;
-		int iReadSize = ReadPackage3D(p_optoDAQ, optoPackage);
-		if (iReadSize < 0) {
-			std::cout<<"Something went wrong, DAQ closed!"<<std::endl;
-			return;
-		}
-		uTotalReadPackages += (unsigned int)iReadSize;
+// 	mytime_t tNow = Now();
+// 	unsigned int uTotalReadPackages = 0;
+// 	while(true)
+// 	{
+// 		mytime_t tLoopNow = NowMicro();
+// 		OptoPackage optoPackage;
+// 		int iReadSize = ReadPackage3D(p_optoDAQ, optoPackage);
+// 		if (iReadSize < 0) {
+// 			std::cout<<"Something went wrong, DAQ closed!"<<std::endl;
+// 			return;
+// 		}
+// 		uTotalReadPackages += (unsigned int)iReadSize;
 
-		// Formatting output in C style
-		double dLoopTime = ElapsedTimeMicro(tLoopNow) / 1000.0;
-		mytime_t TotalElapsedTime = ElapsedTime(tNow);
-		double dTotalTime = (double)TotalElapsedTime / 1000.0; // Elapsed time in sec
-		double dFrequency = 0.0;
-		if (dTotalTime > 0.0) {
-			dFrequency = (uTotalReadPackages / dTotalTime);
-		}
-//		fprintf(stdout, "Elapsed: %.1f s Loop time: %.2f ms Samples: %u Sample rate: %.2f Hz\r\n", dTotalTime, dLoopTime, uTotalReadPackages, dFrequency);
-//		fflush(stdout);
+// 		// Formatting output in C style
+// 		double dLoopTime = ElapsedTimeMicro(tLoopNow) / 1000.0;
+// 		mytime_t TotalElapsedTime = ElapsedTime(tNow);
+// 		double dTotalTime = (double)TotalElapsedTime / 1000.0; // Elapsed time in sec
+// 		double dFrequency = 0.0;
+// 		if (dTotalTime > 0.0) {
+// 			dFrequency = (uTotalReadPackages / dTotalTime);
+// 		}
+// //		fprintf(stdout, "Elapsed: %.1f s Loop time: %.2f ms Samples: %u Sample rate: %.2f Hz\r\n", dTotalTime, dLoopTime, uTotalReadPackages, dFrequency);
+// //		fflush(stdout);
 
-		processRaw3DSensorData(optoPackage, force_raw);
+// 		processRaw3DSensorData(optoPackage, force_raw);
 
-		if(use_filter)
-		{
-		    force_filtered = filter.update(force_raw);
-		}
-		else
-		{
-		    force_filtered = force_raw;
-		}
+// 		if(use_filter)
+// 		{
+// 		    force_filtered = filter.update(force_raw);
+// 		}
+// 		else
+// 		{
+// 		    force_filtered = force_raw;
+// 		}
 
-		//send to redis
-		redis_client.setEigenMatrixDerived(EE_FORCE_SENSOR_FORCE_KEY, force_filtered);
-	}
+// 		//send to redis
+// 		redis_client.setEigenMatrixDerived(EE_FORCE_SENSOR_FORCE_KEY, force_filtered);
+// 	}
 
-}
+// }
 
 void Run6DSensorExample(OptoDAQ & p_optoDAQ)
 {
@@ -371,13 +316,11 @@ void Run6DSensorExample(OptoDAQ & p_optoDAQ)
 	while(true)
 	{
 		mytime_t tLoopNow = NowMicro();
-		OptoPackage6D optoPackage;
-		int iReadSize = ReadPackage6D(p_optoDAQ, optoPackage);
-		if (iReadSize < 0) {
+		OptoPacket6D optoPackage;
+		if (!ReadPackage6D(p_optoDAQ, optoPackage) || !p_optoDAQ.IsValid()) {
 			std::cout<<"Something went wrong, DAQ closed!"<<std::endl;
 			return;
 		}
-		uTotalReadPackages += (unsigned int)iReadSize;
 
 		// Formatting output in C style
 		double dLoopTime = ElapsedTimeMicro(tLoopNow) / 1000.0;
@@ -385,12 +328,15 @@ void Run6DSensorExample(OptoDAQ & p_optoDAQ)
 		double dTotalTime = (double)TotalElapsedTime / 1000.0; // Elapsed time in sec
 		double dFrequency = 0.0;
 		if (dTotalTime > 0.0) {
-			dFrequency = (uTotalReadPackages / dTotalTime);
+			dFrequency = (1 / dTotalTime);
 		}
 		//fprintf(stdout, "Elapsed: %.1f s Loop time: %.2f ms Samples: %u Sample rate: %.2f Hz\r\n", dTotalTime, dLoopTime, uTotalReadPackages, dFrequency);
 		//fflush(stdout);
 
-		processRaw6DSensorData(optoPackage, force_raw);
+		if (!processRaw6DSensorData(optoPackage, force_raw)) {
+			std::cout<<"Packet process failed"<<std::endl;
+			return;
+		}
 
 		if(use_filter)
 		{
@@ -423,22 +369,23 @@ void Run6DSensorExample(OptoDAQ & p_optoDAQ)
 
 int main()
 {
-	OptoDAQ optoDaq;
-	OptoPorts optoPorts;
+	OptoDAQDescriptor descriptor;
+	OptoDAQ optoDAQ;
+	
 	// Changeable values, feel free to play with them
 	int iPortIndex = 0;  // The index of the port which will be opened
 
-	int iSpeed = 1000; // Speed in Hz (30, 100, 333 or 1000)
-	int iFilter = 15;  // Filter cutoff frequency in Hz (15, 50 or 150)
+	int iSpeed = 500; // Speed in Hz (between 0 and 500)
+	int iFilter = 4;  // Filter cutoff frequency in Hz (0 - no filtering; 1 - 500 Hz, 2 - 150 Hz, 3 - 50 Hz, 4 - 15 Hz (default), 5 - 5 Hz, 6 - 1.5 Hz)
 	///////////////////
-	if (OpenPort(optoDaq, optoPorts, iPortIndex) == false) {
+	if (OpenPort(descriptor, optoDAQ, iPortIndex) == false) {
 		std::cout<<"Could not open port"<<std::endl;
 		return 0;
 	}
-	bool bConfig = SetConfig(optoDaq, iSpeed, iFilter);
+	bool bConfig = SetConfig(optoDAQ, iSpeed, iFilter);
 	if (bConfig == false) {
 		std::cout<<"Could not set config"<<std::endl;
-		optoDaq.close();
+		optoDAQ.Close();
 		return 0;
 	}
 
@@ -448,15 +395,10 @@ int main()
 //	force_file.open("forces.txt");
 
 
-	if (Is3DSensor(optoDaq)) {
-		Run3DSensorExample(optoDaq);
-	}
-	else {
-		Run6DSensorExample(optoDaq);
-	}
+	Run6DSensorExample(optoDAQ);
 
 
-	optoDaq.close();
+	optoDAQ.Close();
 	return 0;
 }
 
