@@ -1,61 +1,36 @@
-cmake_minimum_required(VERSION 2.8 FATAL_ERROR)
+cmake_minimum_required(VERSION 3.5)
 
-project(optoforce_driver)
-
+project(optoforce_sensor_redis_driver)
 
 # CMAKE OPTIONS
-set(CMAKE_BUILD_TYPE Debug)
-SET(CMAKE_VERBOSE_MAKEFILE OFF)
-SET(CMAKE_CXX_FLAGS "-std=c++11")
-
-# BUILD SOURCES AND LIBRARY
-set(SOURCES optoforce6DRedisDriver.cpp 
-			${PROJECT_SOURCE_DIR}/redis/RedisClient.h
-			${PROJECT_SOURCE_DIR}/filters/ButterworthFilter.h
-)
-
-# Create a library
-add_executable(${PROJECT_NAME} ${SOURCES})
+set(CMAKE_CXX_FLAGS "-std=c++17")
+# set default build to release with debug info. mimic'ed from RBDL project.
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+  message(STATUS "Setting build type to 'Release' as none was specified.")
+  # Set the default build, and also the possible values of build type for
+  # cmake-gui
+  set(CMAKE_BUILD_TYPE
+      Release
+      CACHE STRING "Choose the type of build." FORCE)
+  set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Debug" "Release"
+                                               "MinSizeRel" "RelWithDebInfo")
+endif()
 
 # optoforce
-# set(OPTOFORCE_INCLUDE_DIRS ${CMAKE_CURRENT_LIST_DIR}/LINUX_API_V1.5.1/include/)
-# find_library(OMD_LIBRARIES NAMES OMD PATHS ${CMAKE_CURRENT_LIST_DIR}/LINUX_API_V1.5.1/lib)
 set(OPTOFORCE_INCLUDE_DIRS ${CMAKE_CURRENT_LIST_DIR}/OptoForceAPI2.0.0/include/)
 find_library(OMD_LIBRARIES NAMES OptoForceAPI PATHS ${CMAKE_CURRENT_LIST_DIR}/OptoForceAPI2.0.0/lib)
-
-
-# - hiredis
-find_library(HIREDIS_LIBRARY hiredis)
+include_directories(${OPTOFORCE_INCLUDE_DIRS})
 
 # - eigen3
 find_package(Eigen3 REQUIRED)
+include_directories(${EIGEN3_INCLUDE_DIR})
 
-# jsoncpp
-if (CMAKE_SYSTEM_NAME MATCHES Darwin) 
-	find_library(JSONCPP_LIBRARY jsoncpp)
-elseif (CMAKE_SYSTEM_NAME MATCHES Linux)
-	find_package(PkgConfig REQUIRED)
-	pkg_check_modules(JSONCPP jsoncpp)
-	link_directories(${JSONCPP_LIBRARY_DIRS})
-	set(JSONCPP_LIBRARY ${JSONCPP_LIBRARIES})
-endif ()
+# BUILD SOURCES AND LIBRARY
+set(SOURCES optoforce6DRedisDriver.cpp )
 
-
-# create headers list
-set(optoforce_driver_INCLUDE_DIRS   
-					${PROJECT_SOURCE_DIR}/redis
-					${PROJECT_SOURCE_DIR}/filters
-				    ${OPTOFORCE_INCLUDE_DIRS}
-				    ${EIGEN3_INCLUDE_DIR}
-					${JSONCPP_INCLUDE_DIRS}
-)
-
-# create libraries list
-set(optoforce_driver_LIBRARIES ${OMD_LIBRARIES} -lncurses -lrt -lpthread ${HIREDIS_LIBRARY}
-				    )
-
-include_directories( ${optoforce_driver_INCLUDE_DIRS} )
-target_link_libraries(${PROJECT_NAME} ${optoforce_driver_LIBRARIES})
+# Create an executable
+add_executable(${PROJECT_NAME} ${SOURCES})
+target_link_libraries(${PROJECT_NAME} ${OMD_LIBRARIES} -lncurses -lrt -lpthread)
 
 
 
