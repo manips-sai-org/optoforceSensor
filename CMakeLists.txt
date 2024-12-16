@@ -18,19 +18,23 @@ endif()
 
 # optoforce
 set(OPTOFORCE_INCLUDE_DIRS ${CMAKE_CURRENT_LIST_DIR}/OptoForceAPI2.0.0/include/)
-find_library(OMD_LIBRARIES NAMES OptoForceAPI PATHS ${CMAKE_CURRENT_LIST_DIR}/OptoForceAPI2.0.0/lib)
+find_library(OMD_LIBRARIES NAMES OptoForceAPI PATHS ${CMAKE_CURRENT_SOURCE_DIR}/OptoForceAPI2.0.0/lib)
 include_directories(${OPTOFORCE_INCLUDE_DIRS})
 
 # - eigen3
 find_package(Eigen3 REQUIRED)
 include_directories(${EIGEN3_INCLUDE_DIR})
 
+# SaiCommon
+find_package(SAI-COMMON REQUIRED)
+include_directories(${SAI-COMMON_INCLUDE_DIRS})
+
 # BUILD SOURCES AND LIBRARY
 set(SOURCES optoforce6DRedisDriver.cpp )
 
 # Create an executable
 add_executable(${PROJECT_NAME} ${SOURCES})
-target_link_libraries(${PROJECT_NAME} ${OMD_LIBRARIES} -lncurses -lrt -lpthread)
+target_link_libraries(${PROJECT_NAME} ${OMD_LIBRARIES} ${SAI-COMMON_LIBRARIES} -lncurses -lrt -lpthread)
 
 
 

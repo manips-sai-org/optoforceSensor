@@ -15,18 +15,11 @@
 #include "OptoDAQWatcher.h"
 #include "OptoDAQDescriptor.h"
 #include "OptoPacket6D.h"
-#include "filters/ButterworthFilter.h"
-
-// For redis publication
-#include "redis/RedisClient.h"
+#include "SaiCommon.h"
 
 const std::string EE_FORCE_SENSOR_FORCE_KEY = "sai2::optoforceSensor::6Dsensor::force";
 
 typedef unsigned long long mytime_t;
-
-sai::ButterworthFilter filter;
-const double cutoff_freq = 0.05;  //the cutoff frequency of the filter, in the range of (0 0.5) of sampling freq
-bool use_filter = false;
 
 unsigned long long counter = 0;
 
@@ -293,21 +286,18 @@ bool processRaw6DSensorData(const OptoPacket6D& optoPackage, Eigen::VectorXd& da
 void Run6DSensorExample(OptoDAQ & p_optoDAQ)
 {
 	// start redis client
-	HiredisServerInfo info;
-	info.hostname_ = "127.0.0.1";
-	info.port_ = 6379;
-	info.timeout_ = { 1, 500000 }; // 1.5 seconds
-	auto redis_client = CDatabaseRedisClient();
-	redis_client.serverIs(info);
+	SaiCommon::RedisClient redis_client;
+	redis_client.connect();
 
-    if(use_filter)
-    {
-        filter.setDimension(6);
-        filter.setCutoffFrequency(cutoff_freq);
-    }
+	// setup filter
+	bool use_filter = false;
+	const double cutoff_freq = 0.05;  //the cutoff frequency of the filter, in the range of (0 0.5) of sampling freq
+	SaiCommon::ButterworthFilter filter(cutoff_freq);
 
     Eigen::VectorXd force_raw = Eigen::VectorXd::Zero(6);
     Eigen::VectorXd force_filtered = Eigen::VectorXd::Zero(6);
+
+	filter.initializeFilter(force_raw);
 
 	mytime_t tNow = Now();
 	unsigned int uTotalReadPackages = 0;
@@ -354,7 +344,7 @@ void Run6DSensorExample(OptoDAQ & p_optoDAQ)
 
 
 		// publish to redis
-		redis_client.setEigenMatrixDerived(EE_FORCE_SENSOR_FORCE_KEY, force_filtered);
+		redis_client.setEigen(EE_FORCE_SENSOR_FORCE_KEY, force_filtered);
 
 		counter++;
 
