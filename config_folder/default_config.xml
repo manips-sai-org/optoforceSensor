@@ -1,0 +1,3 @@
+<?xml version="1.0" ?>
+
+<saiOptoforceDriverConfig robotName="FrankaRobot" linkName="eef-link" redisPrefix="sai" useFilter="true" normalizedFilterCutoff="0.05"/>

@@ -25,6 +25,10 @@ include_directories(${OPTOFORCE_INCLUDE_DIRS})
 find_package(Eigen3 REQUIRED)
 include_directories(${EIGEN3_INCLUDE_DIR})
 
+# - tinyxml2
+find_library(TINYXML_LIBRARIES tinyxml2)
+include_directories(${TINYXML_INCLUDE_DIR})
+
 # SaiCommon
 find_package(SAI-COMMON REQUIRED)
 include_directories(${SAI-COMMON_INCLUDE_DIRS})
@@ -34,7 +38,8 @@ set(SOURCES optoforce6DRedisDriver.cpp )
 
 # Create an executable
 add_executable(${PROJECT_NAME} ${SOURCES})
-target_link_libraries(${PROJECT_NAME} ${OMD_LIBRARIES} ${SAI-COMMON_LIBRARIES} -lncurses -lrt -lpthread)
+target_link_libraries(${PROJECT_NAME} ${OMD_LIBRARIES} ${SAI-COMMON_LIBRARIES} ${TINYXML_LIBRARIES} -lncurses -lrt -lpthread)
 
-
+set(CONFIG_FOLDER "${CMAKE_CURRENT_SOURCE_DIR}/config_folder")
+add_definitions(-DCONFIG_FOLDER="${CONFIG_FOLDER}")
 

@@ -16,8 +16,17 @@
 #include "OptoDAQDescriptor.h"
 #include "OptoPacket6D.h"
 #include "SaiCommon.h"
+#include "tinyxml2.h"
 
-const std::string EE_FORCE_SENSOR_FORCE_KEY = "sai2::optoforceSensor::6Dsensor::force";
+struct RedisDriverConfig {
+	std::string robot_name;
+	std::string link_name;
+	std::string redis_prefix = "sai";
+	bool use_filter = false;
+	double normalized_filter_cutoff_frequency = 0.05;
+};
+
+// const std::string EE_FORCE_SENSOR_FORCE_KEY = "sai2::optoforceSensor::6Dsensor::force";
 
 typedef unsigned long long mytime_t;
 
@@ -283,16 +292,19 @@ bool processRaw6DSensorData(const OptoPacket6D& optoPackage, Eigen::VectorXd& da
 
 // }
 
-void Run6DSensorExample(OptoDAQ & p_optoDAQ)
+void Run6DSensorExample(OptoDAQ & p_optoDAQ, RedisDriverConfig config)
 {
 	// start redis client
-	SaiCommon::RedisClient redis_client;
+	SaiCommon::RedisClient redis_client(config.redis_prefix);
 	redis_client.connect();
 
+	std::string FORCE_KEY = "sensors::" + config.robot_name + "::ft_sensor::" + config.link_name + "::force";
+	std::string MOMENT_KEY = "sensors::" + config.robot_name + "::ft_sensor::" + config.link_name + "::moment";
+
 	// setup filter
-	bool use_filter = false;
-	const double cutoff_freq = 0.05;  //the cutoff frequency of the filter, in the range of (0 0.5) of sampling freq
-	SaiCommon::ButterworthFilter filter(cutoff_freq);
+	// bool use_filter = false;
+	// const double cutoff_freq = 0.05;  //the cutoff frequency of the filter, in the range of (0 0.5) of sampling freq
+	SaiCommon::ButterworthFilter filter(config.normalized_filter_cutoff_frequency);
 
     Eigen::VectorXd force_raw = Eigen::VectorXd::Zero(6);
     Eigen::VectorXd force_filtered = Eigen::VectorXd::Zero(6);
@@ -328,7 +340,7 @@ void Run6DSensorExample(OptoDAQ & p_optoDAQ)
 			return;
 		}
 
-		if(use_filter)
+		if(config.use_filter)
 		{
 		    force_filtered = filter.update(force_raw);
 		}
@@ -344,7 +356,8 @@ void Run6DSensorExample(OptoDAQ & p_optoDAQ)
 
 
 		// publish to redis
-		redis_client.setEigen(EE_FORCE_SENSOR_FORCE_KEY, force_filtered);
+		redis_client.setEigen(FORCE_KEY, force_filtered.head(3));
+		redis_client.setEigen(MOMENT_KEY, force_filtered.tail(3));
 
 		counter++;
 
@@ -356,9 +369,56 @@ void Run6DSensorExample(OptoDAQ & p_optoDAQ)
 }
 
 
+RedisDriverConfig parseRedisDriverConfig(const std::string& config_file_path) {
+	RedisDriverConfig config;
+	tinyxml2::XMLDocument doc;
+	if (doc.LoadFile(config_file_path.c_str()) != tinyxml2::XML_SUCCESS) {
+		throw std::runtime_error("Could not load driver config file: " + config_file_path);
+	}
 
-int main()
+	tinyxml2::XMLElement* driver_xml = doc.FirstChildElement("saiOptoforceDriverConfig");
+	if (driver_xml == nullptr) {
+		throw std::runtime_error("No 'saiOptoforceDriverConfig' element found in driver config file: " + config_file_path);
+	}
+
+	if(!driver_xml->Attribute("robotName")) {
+		throw std::runtime_error("No 'robotName' attribute found in driver config file: " + config_file_path);
+	}
+	config.robot_name = driver_xml->Attribute("robotName");
+
+	if(!driver_xml->Attribute("linkName")) {
+		throw std::runtime_error("No 'linkName' attribute found in driver config file: " + config_file_path);
+	}
+	config.link_name = driver_xml->Attribute("linkName");
+
+	if(driver_xml->Attribute("redisPrefix")) {
+		config.redis_prefix = driver_xml->Attribute("redisPrefix");
+	}
+
+	if(driver_xml->Attribute("useFilter")) {
+		config.use_filter = driver_xml->BoolAttribute("useFilter");
+	}
+
+	if(driver_xml->Attribute("filterCutoff")) {
+		config.normalized_filter_cutoff_frequency = driver_xml->DoubleAttribute("normalizedFilterCutoff");
+	}
+
+	return config;
+}
+
+
+int main(int argc, char** argv)
 {
+
+	std::string config_file = "default_config.xml";
+
+    if (argc > 1) {
+        config_file = argv[1];
+    }
+	std::string config_file_path = std::string(CONFIG_FOLDER) + "/" + config_file;
+
+	RedisDriverConfig config = parseRedisDriverConfig(config_file_path);
+
 	OptoDAQDescriptor descriptor;
 	OptoDAQ optoDAQ;
 	
@@ -385,7 +445,7 @@ int main()
 //	force_file.open("forces.txt");
 
 
-	Run6DSensorExample(optoDAQ);
+	Run6DSensorExample(optoDAQ, config);
 
 
 	optoDAQ.Close();
